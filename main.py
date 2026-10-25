@@ -72,7 +72,7 @@ def _dump(obj) -> str:
     return json.dumps(obj, ensure_ascii=False, default=str, separators=(",", ":"))
 
 
-@register(PLUGIN, "toddmiao", "AI 图片/视频生成：多接口兼容、LLM 工具、自然语言配置、联动账号运维自动发布", "0.1.0",
+@register(PLUGIN, "toddmiao", "AI 图片/视频生成：多接口兼容、LLM 工具、自然语言配置、联动账号运维自动发布", "0.2.0",
           "https://github.com/miaoxutao123/astrbot_plugin_media_gen")
 class MediaGenPlugin(Star):
     def __init__(self, context: Context, config: dict):
@@ -329,12 +329,31 @@ class MediaGenPlugin(Star):
                                          sender_name=job.requester_name or "AI 生成插件", admin=True)
         # 定时任务往往没人盯着：审批有效期放长（运维插件 0.10.1+ 支持，旧版本会忽略这个参数）
         ttl = int(self.config.get("publish_confirm_ttl_s", 43200) or 0) if job.meta.get("automation") else 0
+        # caller / caller_ref：运维插件 v0.12+ 在发布成功、失败、被拒、过期后回调 on_publish_result
         res = await bridge.publish(self.context, self.config.get("ops_plugin", "astrbot_plugin_videos_analysis"), ev,
-                                   path, title, tags, platform, account, desc=job.meta.get("desc", ""), confirm_ttl=ttl)
+                                   path, title, tags, platform, account, desc=job.meta.get("desc", ""), confirm_ttl=ttl,
+                                   caller=PLUGIN, caller_ref=job.id)
         job.meta["publish"] = {"platform": platform, "status": res.get("status"), "code": res.get("code"),
-                               "at": int(time.time())}
+                               "title": title, "at": int(time.time())}
         self.jobs.save()
         return res
+
+    async def on_publish_result(self, result: dict) -> None:
+        """运维插件回传的发布结局：更新任务状态，推送到任务所在会话，自动化任务记一笔。"""
+        job = self.jobs.jobs.get(str(result.get("caller_ref") or ""))
+        if not job:
+            logger.info(f"[media_gen] 收到未知任务的发布结果: {result.get('caller_ref')} {result.get('status')}")
+            return
+        pub = job.meta.setdefault("publish", {})
+        if pub.get("code") and result.get("code") and pub["code"] != result["code"] and pub.get("status") == "published":
+            return  # 同一个任务已经发布成功过，旧申请的迟到结果不覆盖
+        pub.update({k: result[k] for k in ("status", "code", "platform", "work_id", "url", "message") if result.get(k)})
+        pub["at"] = int(result.get("at") or time.time())
+        self.jobs.save()
+        if job.meta.get("automation"):
+            self.autos.record(job.meta["automation"], f"{bridge.STATUS_TEXT.get(result.get('status'), result.get('status'))}："
+                              f"{result.get('title') or job.meta.get('title', '')}")
+        await self._send(job.umo, [Comp.Plain(bridge.result_message(result, job.meta.get("title", "")))])
 
     # ==================== 自动化 ====================
 
@@ -364,11 +383,21 @@ class MediaGenPlugin(Star):
             + (f"prompts: 长度为 {count} 的数组，每张图各自的画面描述（同一主题、同一画风，构成连续的图文）\n"
                f"captions: 长度为 {count} 的数组，每张图配的一句短文案（≤16 字）\n" if kind in ("image", "slides") and count > 1 else "")
         )
+        data = ""
+        plat = r.get("platform", "none")
+        if plat != "none" and self.config.get("planner_use_insight", True):
+            data = bridge.insight_text(await bridge.insight(
+                self.context, self.config.get("ops_plugin", "astrbot_plugin_videos_analysis"), plat), plat)
+        if data:
+            logger.info(f"[media_gen] 自动化「{r['name']}」构思参考了{bridge.PLATFORM_LABEL.get(plat, plat)}运营数据（{len(data)} 字）")
+            sys_prompt += ("下面会给出账号的运营数据。选题和标题要贴合账号已有的受众：延续表现好的作品方向，"
+                           "避开没人看的方向；热点只在和主题相关时借用，不要硬蹭；完播率低就把开头做得更抓人、时长更短。\n")
         user = (f"主题/方向：{r.get('topic')}\n风格与要求：{r.get('style') or '无特别要求'}\n"
                 f"产出：{'视频' if kind == 'video' else '图文'}，尺寸 {r.get('size') or '默认'}"
                 + (f"，时长约 {r.get('duration')} 秒" if kind == "video" and r.get("duration") else "")
                 + (f"，发布平台 {r.get('platform')}" if r.get("platform", "none") != "none" else "")
                 + (f"\n最近已经做过（不要重复）：{'；'.join(recent[:10])}" if recent else "")
+                + (f"\n\n账号运营数据（供参考）：\n{data}" if data else "")
                 + f"\n今天是 {time.strftime('%Y-%m-%d %A')}")
         pid = await self._planner_provider(r.get("notify_umo", ""))
         if pid:

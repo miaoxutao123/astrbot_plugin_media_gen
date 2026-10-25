@@ -141,6 +141,9 @@ def build() -> dict:
                                   "hint": "定时任务常在无人时完成，默认 12 小时内回复「确认 xxxx」都有效（最长 24 小时，需运维插件支持 confirm_ttl）"},
         "ops_plugin": {"description": "账号运维插件名", "type": "string", "default": "astrbot_plugin_videos_analysis",
                        "hint": "发布联动调用它的 publish_request"},
+        "planner_use_insight": {"description": "自动化选题参考账号运营数据", "type": "bool", "default": True,
+                                "hint": "发布到平台的自动化任务构思时，读取运维插件的 ops_insight（账号数据、表现好的作品、热点、"
+                                        "已发布内容的表现）一起交给构思模型；需要运维插件 v0.12+，没有时自动跳过"},
     }
 
 

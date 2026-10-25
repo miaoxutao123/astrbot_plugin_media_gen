@@ -1,7 +1,7 @@
 name: astrbot_plugin_media_gen
 display_name: AI 图片/视频生成
 desc: 多接口兼容的 AI 图片/视频生成（OpenAI/Sora、百炼、方舟、可灵、MiniMax、Gemini/Veo、Replicate、fal、ComfyUI、通用模板），LLM 工具调用、自然语言配置、定时自动化，联动账号运维插件发布
-version: 0.1.0
+version: 0.2.0
 author: toddmiao
 repo: https://github.com/miaoxutao123/astrbot_plugin_media_gen
 astrbot_version: ">=4.10.4"
