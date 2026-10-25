@@ -91,3 +91,24 @@ def test_result_message():
     assert "失败" in bridge.result_message({"status": "failed", "platform": "douyin", "message": "上传超时"}, "猫")
     assert "没有被批准" in bridge.result_message({"status": "rejected", "platform": "douyin", "code": "0001"})
     assert "超时没人确认" in bridge.result_message({"status": "expired", "platform": "douyin", "code": "0002"})
+
+
+class ImageStar(FakeStar):
+    async def post_request(self, event, images, title="", text="", tags=None, platform="douyin", account=None, **opts):
+        self.calls.append({"images": images, "title": title, "text": text, "platform": platform, **opts})
+        return {"status": "pending_confirmation", "code": "5678"}
+
+
+@pytest.mark.asyncio
+async def test_post_images_needs_new_ops_plugin():
+    assert bridge.supports_images(Ctx(FakeStar()), "x") is False
+    res = await bridge.post_images(Ctx(FakeStar()), "x", object(), ["/a.jpg"], "t", "", [], "douyin")
+    assert res["status"] == "unavailable"
+
+    star = ImageStar()
+    assert bridge.supports_images(Ctx(star), "x") is True
+    res = await bridge.post_images(Ctx(star), "x", object(), ["/a.jpg", "/b.jpg"], "标题", "正文", ["猫"], "bilibili",
+                                   caller="mg", caller_ref="j1", ai_generated=True, confirm_ttl=0)
+    assert res["code"] == "5678"
+    assert star.calls == [{"images": ["/a.jpg", "/b.jpg"], "title": "标题", "text": "正文", "platform": "bilibili",
+                           "caller": "mg", "caller_ref": "j1", "ai_generated": True}]

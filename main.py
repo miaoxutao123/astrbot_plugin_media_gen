@@ -72,7 +72,7 @@ def _dump(obj) -> str:
     return json.dumps(obj, ensure_ascii=False, default=str, separators=(",", ":"))
 
 
-@register(PLUGIN, "toddmiao", "AI 图片/视频生成：多接口兼容、LLM 工具、自然语言配置、联动账号运维自动发布", "0.2.0",
+@register(PLUGIN, "toddmiao", "AI 图片/视频生成：多接口兼容、LLM 工具、自然语言配置、联动账号运维自动发布", "0.3.0",
           "https://github.com/miaoxutao123/astrbot_plugin_media_gen")
 class MediaGenPlugin(Star):
     def __init__(self, context: Context, config: dict):
@@ -288,7 +288,19 @@ class MediaGenPlugin(Star):
         tags = " ".join(f"#{t}" for t in plan.get("tags", []))
         text = f"🤖 自动化「{recipe['name']}」：{plan.get('title', '')}\n{plan.get('desc', '')}\n{tags}".strip()
         if recipe.get("kind") != "slides":
-            await self._send(umo, [Comp.Plain(text)] + [Comp.Image.fromFileSystem(p) for p in files])
+            # 多张图登记为一个图片任务：可以“发布刚才那组图”，自动发布时作为图文发出
+            ijob = Job(id=uuid.uuid4().hex[:10], kind=IMAGE, request={"prompt": plan.get("title", "")}, model="batch",
+                       umo=umo, requester="automation", status="succeeded", files=files, finished=time.time(),
+                       meta={"title": plan.get("title"), "tags": plan.get("tags", []), "desc": plan.get("desc", ""),
+                             "automation": recipe["name"], "from_jobs": b["jobs"]})
+            self.jobs.jobs[ijob.id] = ijob
+            self.jobs.save()
+            await self._send(umo, [Comp.Plain(f"{text}\n（任务 {ijob.id}）")] + [Comp.Image.fromFileSystem(p) for p in files])
+            if recipe.get("auto_publish") and recipe.get("platform", "none") != "none":
+                res = await self._publish_job(ijob, None, recipe["platform"], plan.get("title", ""), plan.get("tags", []),
+                                              recipe.get("account", ""))
+                if res.get("status") in ("rejected", "unavailable"):
+                    await self._send(umo, [Comp.Plain(f"⚠️ 自动发布未提交：{res.get('error')}")])
             return
         try:
             out = os.path.join(os.path.dirname(files[0]), f"slides_{uuid.uuid4().hex[:8]}.mp4")
@@ -316,23 +328,32 @@ class MediaGenPlugin(Star):
         if job.status != "succeeded" or not job.files:
             return {"status": "rejected", "error": f"任务 {job.id} 还没有成功的产物"}
         path = job.files[0]
-        if job.kind == IMAGE:  # 平台只收视频：多图合成图文视频
+        ops_name = self.config.get("ops_plugin", "astrbot_plugin_videos_analysis")
+        as_post = (job.kind == IMAGE and self.config.get("publish_images_as", "图文") != "视频"
+                   and bridge.supports_images(self.context, ops_name))
+        if job.kind == IMAGE and not as_post:  # 运维插件不支持图文（或配置成发视频）：多图合成图文视频
             out = os.path.join(os.path.dirname(path), f"{job.id}_slides.mp4")
             if not os.path.exists(out):
                 await slideshow(job.files, out, size="720x1280")
             path = out
         title = (title or job.meta.get("title") or job.request.get("prompt", "")[:20]).strip()[:80]
         tags = [t.lstrip("#") for t in (tags or job.meta.get("tags") or []) if t][:10]
-        if platform == "bilibili" and not tags:
+        if platform == "bilibili" and not tags and not as_post:
             tags = ["AI生成"]
         ev = event or bridge.BridgeEvent(job.umo, sender_id=job.requester or "media_gen",
                                          sender_name=job.requester_name or "AI 生成插件", admin=True)
         # 定时任务往往没人盯着：审批有效期放长（运维插件 0.10.1+ 支持，旧版本会忽略这个参数）
         ttl = int(self.config.get("publish_confirm_ttl_s", 43200) or 0) if job.meta.get("automation") else 0
-        # caller / caller_ref：运维插件 v0.12+ 在发布成功、失败、被拒、过期后回调 on_publish_result
-        res = await bridge.publish(self.context, self.config.get("ops_plugin", "astrbot_plugin_videos_analysis"), ev,
-                                   path, title, tags, platform, account, desc=job.meta.get("desc", ""), confirm_ttl=ttl,
-                                   caller=PLUGIN, caller_ref=job.id)
+        # caller / caller_ref：运维插件 v0.12+ 在发布成功、失败、被拒、过期后回调 on_publish_result；
+        # ai_generated：按平台规范声明“内容由 AI 生成”（运维插件 v0.14+）
+        common = {"confirm_ttl": ttl, "caller": PLUGIN, "caller_ref": job.id,
+                  "ai_generated": bool(self.config.get("declare_ai_generated", True))}
+        if as_post:
+            res = await bridge.post_images(self.context, ops_name, ev, [f for f in job.files if os.path.exists(f)],
+                                           title[:20], job.meta.get("desc", ""), tags, platform, account, **common)
+        else:
+            res = await bridge.publish(self.context, ops_name, ev, path, title, tags, platform, account,
+                                       desc=job.meta.get("desc", ""), **common)
         job.meta["publish"] = {"platform": platform, "status": res.get("status"), "code": res.get("code"),
                                "title": title, "at": int(time.time())}
         self.jobs.save()

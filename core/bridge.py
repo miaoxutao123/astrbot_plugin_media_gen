@@ -116,6 +116,27 @@ def result_message(result: dict, job_title: str = "") -> str:
     return f"发布状态更新：{status}"
 
 
+def supports_images(context, name: str) -> bool:
+    """运维插件 v0.14+ 有 post_request（发图文）。"""
+    star = ops_plugin(context, name)
+    return bool(star and hasattr(star, "post_request"))
+
+
+async def post_images(context, name: str, event, images: list[str], title: str, text: str, tags: list[str],
+                      platform: str, account: str = "", **opts) -> dict:
+    """把多张图作为图文提交发布申请（同样走运维插件审批）。"""
+    star = ops_plugin(context, name)
+    if not star or not hasattr(star, "post_request"):
+        return {"status": "unavailable", "error": "账号运维插件版本太旧，不支持发布图文（需要 v0.14+）"}
+    try:
+        res = await star.post_request(event, images, title, text, tags, platform=platform, account=account or None,
+                                      **{k: v for k, v in opts.items() if v})
+    except Exception as e:  # 对方保证不抛，但防御一下
+        log.exception("[media_gen] 调用 post_request 失败")
+        return {"status": "rejected", "error": str(e)[:200]}
+    return res if isinstance(res, dict) else {"status": "unknown", "raw": str(res)[:200]}
+
+
 async def publish(context, name: str, event, video_path: str, title: str, tags: list[str], platform: str,
                   account: str = "", **opts) -> dict:
     star = ops_plugin(context, name)

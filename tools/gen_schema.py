@@ -141,6 +141,10 @@ def build() -> dict:
                                   "hint": "定时任务常在无人时完成，默认 12 小时内回复「确认 xxxx」都有效（最长 24 小时，需运维插件支持 confirm_ttl）"},
         "ops_plugin": {"description": "账号运维插件名", "type": "string", "default": "astrbot_plugin_videos_analysis",
                        "hint": "发布联动调用它的 publish_request"},
+        "publish_images_as": {"description": "图片发布成", "type": "string", "options": ["图文", "视频"], "default": "图文",
+                              "hint": "图文=多张图直接发成平台图文（运维插件 v0.14+）；视频=合成带推镜和字幕的幻灯片视频再发。旧版运维插件自动按视频发"},
+        "declare_ai_generated": {"description": "发布时声明“内容由 AI 生成”", "type": "bool", "default": True,
+                                 "hint": "抖音勾选自主声明“内容由AI生成”，B站图文打开 AI 创作标记；平台规范要求标注，建议保持开启"},
         "planner_use_insight": {"description": "自动化选题参考账号运营数据", "type": "bool", "default": True,
                                 "hint": "发布到平台的自动化任务构思时，读取运维插件的 ops_insight（账号数据、表现好的作品、热点、"
                                         "已发布内容的表现）一起交给构思模型；需要运维插件 v0.12+，没有时自动跳过"},
