@@ -72,7 +72,8 @@ def _dump(obj) -> str:
     return json.dumps(obj, ensure_ascii=False, default=str, separators=(",", ":"))
 
 
-@register(PLUGIN, "toddmiao", "AI 图片/视频生成：多接口兼容、LLM 工具、自然语言配置、联动账号运维自动发布", "0.1.0")
+@register(PLUGIN, "toddmiao", "AI 图片/视频生成：多接口兼容、LLM 工具、自然语言配置、联动账号运维自动发布", "0.1.0",
+          "https://github.com/miaoxutao123/astrbot_plugin_media_gen")
 class MediaGenPlugin(Star):
     def __init__(self, context: Context, config: dict):
         super().__init__(context, config)
