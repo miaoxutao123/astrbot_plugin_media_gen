@@ -5,6 +5,7 @@ from datetime import datetime
 
 import pytest
 
+from astrbot_plugin_media_gen.core import automation
 from astrbot_plugin_media_gen.core.automation import Automations, parse_plan, parse_schedule
 from astrbot_plugin_media_gen.core.registry import Registry, make_http_factory
 from astrbot_plugin_media_gen.core.settings import Settings
@@ -85,7 +86,12 @@ def test_schedule_parse():
         parse_schedule("every 1m")
 
 
-async def test_daily_due_and_caps(tmp_path):
+async def test_daily_due_and_caps(tmp_path, monkeypatch):
+    # 固定日期 + 假时钟：trigger 用 time.time() 记 last_run，不能依赖真实的当前时刻
+    # （之前在本地 08:00 前跑，真实的 last_run 早于 08:00 档，会被判成还没跑过）
+    day = datetime(2026, 1, 15).timestamp()
+    clock = [day]
+    monkeypatch.setattr(automation.time, "time", lambda: clock[0])
     runs = []
 
     async def runner(r, reason):
@@ -98,9 +104,9 @@ async def test_daily_due_and_caps(tmp_path):
     r = cfg["automations"][0]
     assert r["platform"] == "douyin" and r["kind"] == "slides"
     # 创建于 07:00，08:05 时应触发；同一天再查不应重复
-    day = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
     a.state["猫"]["armed_at"] = day + 7 * 3600
-    assert [x["name"] for x in a.due(day + 8 * 3600 + 300)] == ["猫"]
+    clock[0] = day + 8 * 3600 + 300
+    assert [x["name"] for x in a.due(clock[0])] == ["猫"]
     await a.trigger(r, "schedule")
     assert runs == ["schedule"]
     assert a.due(day + 9 * 3600) == []
